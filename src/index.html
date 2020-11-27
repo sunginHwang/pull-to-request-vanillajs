@@ -11,8 +11,8 @@
       position: absolute;
       left: 0;
       right: 0;
-      top: -4rem;
-      height: 4rem;
+      top: -10rem;
+      height: 10rem;
       background-color: #5c5cd6;
       color: white;
     }
@@ -25,6 +25,12 @@
       position: relative;
     }
 
+    #ptr {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
   </style>
 </head>
 <body>
@@ -34,7 +40,7 @@
   </div>
 </header>
 <div id="main">
-  <div class="header">
+  <div id="ptr" class="header">
     당기기
   </div>
   <div class="wrap" id="list">
@@ -102,6 +108,25 @@
   </div>
 </div>
 <script>
+
+  const easings = {
+    elastic: function(t,b,c,d) {
+      const ts = (t/=d)*t;
+      const tc = ts*t;
+      return b+c*(33*tc*ts + -106*ts*ts + 126*tc + -67*ts + 15*t);
+    },
+    noeasing: function(t, b, c, d) {
+      t/=d;
+      return b+c*(t);
+    }
+  };
+
+  const ptrState = {
+    pending: 'pending', // 호출 전
+    pulling: 'pulling', // 당기는 중
+    releasing: 'releasing', // 놓으면 호출하는 단계
+    refreshing: 'refreshing', // 리프레쉬 중
+  }
   function isTopArea() {
     return window.scrollY !== 0;
   }
@@ -124,28 +149,23 @@
     const defaultProps = {
       target: document.getElementsByTagName('body')[0],
       startY: -100, // 시작 y 축 값
-      maxPullHeight: 64, // pullRequest 영역 최대치 설정
-      moveHeight: 0
+      maxPullHeight: 16 * 10, // pullRequest 영역 최대치 설정
+      moveHeight: 0,
+      state: ptrState.pending,
+      animate: false,
+      currentStep: 0,
     };
 
     app.props = Object.assign({}, defaultProps, props);
 
-    app._onTouchEnd = function(e) {
-      if (isTopArea()) {
-        return;
-      }
-
-      enableScroll();
-      app.props.target.style.transform = null;
-      app.props.target.startY = 0;
-      app.props.target.moveHeight = 0;
-    }
-
+    // 거치 시작
     app._onTouchStart = function(e) {
       if (isTopArea()) {
         return;
       }
 
+      // 터치 시작 상태 변경
+      app.props.state = ptrState.pulling;
       app.props.startY = screenY(e);
     }
 
@@ -154,7 +174,7 @@
         return;
       }
 
-      const { startY, target } = app.props;
+      const { startY, target, maxPullHeight } = app.props;
 
       if(startY > screenY(e)) {
         return;
@@ -162,14 +182,80 @@
 
       disableScroll();
       const currentY = Math.abs(startY - screenY(e)) * 0.5;
-      app.props.moveHeight = currentY > 64 ? 64 : currentY;
-      target.style.transform = `translate3d(0px, ${app.props.moveHeight}px,0px)`
+      const moveHeight = currentY > maxPullHeight ? maxPullHeight : currentY;
+      app.props.moveHeight = moveHeight;
+      target.style.transform = `translate3d(0px, ${moveHeight}px,0px)`;
+
+      if (moveHeight > maxPullHeight * 0.7) {
+        document.getElementById('ptr').innerText = '새로고침 고고';
+        app.props.state = ptrState.releasing;
+      } else {
+        document.getElementById('ptr').innerText = '당기는 중';
+        app.props.state = ptrState.pulling;
+      }
+    }
+
+    app._onTouchEnd = function(e) {
+      if (isTopArea()) {
+        return;
+      }
+
+      if (app.props.animate) {
+        return;
+      }
+      // 애니메이션 스텝 초기화
+      app.props.curStep = 0;
+      if(app.props.state === ptrState.releasing) {
+        document.getElementById('ptr').innerText = '새로고침중';
+        app.props.state = ptrState.refreshing;
+        app._onAnimate();
+        app.props.onRefresh(() => {
+          app.props.curStep = 0;
+          app.props.state = ptrState.pulling;
+          app._onAnimate()
+        });
+      } else{
+        app._onReset();
+      }
+    }
+
+    app._onAnimate = function() {
+      const frame = 1000 / 60;
+      const releaseTime = app.props.state === ptrState.refreshing ? 250: 900;
+      const steps = Math.floor(releaseTime / frame);
+      app.props.curStep++;
+      const minHeight = app.props.state === ptrState.refreshing ? 50 : 0;
+      let topY = app.props.state === ptrState.refreshing
+        ? easings.noeasing(app.props.curStep, app.props.moveHeight, minHeight - app.props.moveHeight, steps)
+        : easings.elastic(app.props.curStep, app.props.moveHeight, minHeight - app.props.moveHeight, steps);
+      if(app.props.state === ptrState.refreshing && topY < minHeight) {
+        topY = minHeight;
+      }
+
+      app.props.target.style.transform = `translate3d(0px, ${topY}px,0px)`;
+
+      if (app.props.curStep > steps) {
+        if(app.props.state === ptrState.pulling) {
+          app.props.animate = false;
+        }
+        app._onReset();
+        return;
+      }
+      requestAnimationFrame(app._onAnimate);
+    }
+
+    app._onReset = function () {
+      console.log('onReset');
+      enableScroll();
+      // app.props.target.style.transform = `translate3d(0px, 0px,0px)`;
+      // app.props.target.style.transform = null;
+      app.props.target.startY = 0;
+      // app.props.target.moveHeight = 0;
+      document.getElementById('ptr').innerText = '당기기';
     }
 
     function onEvent() {
       const { target } = app.props;
-      console.log('onEvent');
-      console.log(target);
       target.addEventListener('touchend', app._onTouchEnd, { passive: false});
       target.addEventListener('touchstart', app._onTouchStart, { passive: false});
       target.addEventListener('touchmove', app._onTouchMove, { passive: false});
@@ -177,8 +263,6 @@
 
     function offEvent() {
       const { target } = app.props;
-      console.log('offEvent');
-      console.log(target);
       target.removeEventListener('touchend', app._onTouchEnd, { passive: false});
       target.removeEventListener('touchstart', app._onTouchStart, { passive: false});
       target.removeEventListener('touchmove', app._onTouchMove, { passive: false});
@@ -196,86 +280,18 @@
   }
 
   const a = pullToRefresh({
-    target: document.getElementById("main")
+    target: document.getElementById("main"),
+    onRefresh: function (cb) {
+      setTimeout(() => {
+        console.log('call-cb----------------------------------');
+        cb();
+      },1500);
+    }
   });
   console.log(a);
 
   a.init();
 
-
-</script>
-<script>
-  /*let moveHeight = 0;
-  let startY = 0;
-  const mainEl = document.getElementById("main");
-  const listEl = document.getElementById("list");
-
-  function isTopArea() {
-    return window.scrollY !== 0;
-  }
-
-  function screenY(e) {
-    return e.targetTouches[0].screenY || 0;
-  }
-
-  function disableScroll() {
-    document.body.style.overflow = 'hidden';
-  }
-
-  function enableScroll() {
-    document.body.style.overflow = null;
-  }
-
-  function _onTouchEnd(e) {
-    if (isTopArea()) {
-      return;
-    }
-
-    enableScroll();
-    mainEl.style.transform = null;
-    listEl.style.transform = null;
-    startY = 0;
-    moveHeight = 0;
-  }
-
-  function _onTouchStart(e) {
-    if (isTopArea()) {
-      return;
-    }
-
-    startY = screenY(e);
-    listEl.style.transform = `translate3d(0px, 0px,0px)`;
-  }
-
-  function _onTouchMove(e) {
-    if (isTopArea()) {
-      return;
-    }
-
-    if(startY > screenY(e)) {
-      return;
-    }
-
-    disableScroll();
-
-    const currentY = Math.abs(startY - screenY(e)) * 0.5;
-    moveHeight = currentY > 64 ? 64 : currentY;
-    mainEl.style.transform = `translate3d(0px, ${moveHeight}px,0px)`
-  }
-
-  function init() {
-    mainEl.addEventListener('touchend', _onTouchEnd, { passive: false});
-    mainEl.addEventListener('touchstart', _onTouchStart, { passive: false});
-    mainEl.addEventListener('touchmove', _onTouchMove, { passive: false});
-  }
-
-  function destroy() {
-    mainEl.removeEventListener('touchend', _onTouchEnd, { passive: false});
-    mainEl.removeEventListener('touchstart', _onTouchStart, { passive: false});
-    mainEl.removeEventListener('touchmove', _onTouchMove, { passive: false});
-  }
-
-  init();*/
 
 </script>
 
